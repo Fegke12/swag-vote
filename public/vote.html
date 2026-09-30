@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Голосование — Генеральная Ассамблея штата SWAG</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#0d1a30">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/fonts.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div class="page">
+  <div class="gov-strip"><div class="wrap">
+    <span class="flagline" aria-hidden="true"></span>
+    <span>Электронная система голосования</span>
+    <span class="spacer"></span>
+    <span class="hide-sm">Защищённое соединение · Доступ по приглашению</span>
+  </div></div>
+  <header class="site-header"><div class="wrap">
+    <a class="brand" href="/">
+      <img src="/img/emblem.svg" alt="Герб штата SWAG">
+      <span class="brand-text">
+        <span class="brand-kicker">Генеральная Ассамблея штата SWAG</span>
+        <span class="brand-title">Участник голосования</span>
+      </span>
+    </a>
+    <div class="header-actions">
+      <div class="bell" id="bell" hidden>
+        <button class="btn btn-ghost btn-icon btn-outline-light" id="bell-btn" type="button" aria-label="Уведомления"></button>
+        <span class="badge" id="bell-badge" hidden></span>
+        <div class="bell-panel" id="bell-panel" hidden>
+          <header>Уведомления</header>
+          <div class="bell-list" id="bell-list"><div class="bell-empty">Уведомлений нет</div></div>
+        </div>
+      </div>
+    </div>
+  </div></header>
+
+  <main class="main"><div class="wrap wrap-narrow" id="app">
+    <div class="card state-screen" aria-busy="true">
+      <div class="state-icon info" id="loading-icon"></div>
+      <h1>Загрузка…</h1>
+      <p class="msg">Проверка приглашения</p>
+    </div>
+  </div></main>
+
+  <footer class="site-footer"><div class="wrap">
+    <img src="/img/emblem.svg" alt="">
+    <span>Генеральная Ассамблея штата SWAG · Конгресс штата SWAG</span>
+  </div></footer>
+</div>
+<datalist id="orgs">
+  <option value="Los Santos Police Department"><option value="Los Santos County Sheriff Department">
+  <option value="San Andreas Medical Center"><option value="Federal Investigation Bureau">
+  <option value="San Andreas National Guard"><option value="San Andreas Fire Department">
+  <option value="Government of SWAG"><option value="Weazel News"><option value="Supreme Court of SWAG">
+</datalist>
+<script src="/js/common.js"></script>
+<script src="/js/vote.js"></script>
+</body>
+</html>

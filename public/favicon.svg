@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Герб штата SWAG">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e2c27a"/>
+      <stop offset="0.55" stop-color="#c29a48"/>
+      <stop offset="1" stop-color="#9a7632"/>
+    </linearGradient>
+    <linearGradient id="n" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2f55"/>
+      <stop offset="1" stop-color="#0c1830"/>
+    </linearGradient>
+    <path id="top" d="M30,120 A90,90 0 0,1 210,120"/>
+    <path id="bot" d="M24,120 A96,96 0 0,0 216,120"/>
+    <g id="leaf"><path d="M0,0 C6,-5 14,-5 20,0 C14,5 6,5 0,0Z" fill="url(#g)"/></g>
+  </defs>
+  <circle cx="120" cy="120" r="116" fill="url(#n)"/>
+  <circle cx="120" cy="120" r="112" fill="none" stroke="url(#g)" stroke-width="3"/>
+  <circle cx="120" cy="120" r="104" fill="none" stroke="url(#g)" stroke-width="0.8"/>
+  <circle cx="120" cy="120" r="72" fill="none" stroke="url(#g)" stroke-width="0.8"/>
+  <text font-family="'PT Serif', Georgia, serif" font-size="14" font-weight="700" letter-spacing="3" fill="url(#g)"><textPath href="#top" startOffset="50%" text-anchor="middle">GENERAL ASSEMBLY</textPath></text>
+  <text font-family="'PT Serif', Georgia, serif" font-size="12.5" font-weight="700" letter-spacing="3" fill="url(#g)"><textPath href="#bot" startOffset="50%" text-anchor="middle">★ STATE OF SWAG ★</textPath></text>
+  <!-- лавровые ветви -->
+  <g transform="translate(120 120)">
+    <g transform="rotate(0)">
+      <use href="#leaf" transform="translate(-58 30) rotate(-120)"/>
+      <use href="#leaf" transform="translate(-64 14) rotate(-105)"/>
+      <use href="#leaf" transform="translate(-66 -3) rotate(-92)"/>
+      <use href="#leaf" transform="translate(-64 -20) rotate(-78)"/>
+      <use href="#leaf" transform="translate(-58 -36) rotate(-62)"/>
+      <use href="#leaf" transform="translate(58 30) rotate(-60) scale(-1 1)"/>
+      <use href="#leaf" transform="translate(64 14) rotate(-75) scale(-1 1)"/>
+      <use href="#leaf" transform="translate(66 -3) rotate(-88) scale(-1 1)"/>
+      <use href="#leaf" transform="translate(64 -20) rotate(-102) scale(-1 1)"/>
+      <use href="#leaf" transform="translate(58 -36) rotate(-118) scale(-1 1)"/>
+    </g>
+  </g>
+  <!-- щит -->
+  <path d="M120 72 L156 84 L156 116 C156 140 140 156 120 166 C100 156 84 140 84 116 L84 84 Z" fill="#0f1d33" stroke="url(#g)" stroke-width="2.4"/>
+  <path d="M120 80 L149 90 L149 116 C149 136 136 149 120 157.5 C104 149 91 136 91 116 L91 90 Z" fill="none" stroke="url(#g)" stroke-width="0.7" opacity="0.8"/>
+  <!-- звезда -->
+  <path d="M120 92 L124.7 105.5 L139 105.8 L127.6 114.4 L131.8 128.1 L120 119.9 L108.2 128.1 L112.4 114.4 L101 105.8 L115.3 105.5 Z" fill="url(#g)"/>
+  <!-- перевязь -->
+  <path d="M96 136 L144 136" stroke="url(#g)" stroke-width="1.2"/>
+  <text x="120" y="150" text-anchor="middle" font-family="'PT Serif', Georgia, serif" font-size="11" font-weight="700" letter-spacing="2.5" fill="url(#g)">SWAG</text>
+  <!-- нижняя лента -->
+  <circle cx="27" cy="120" r="2.2" fill="url(#g)"/>
+  <circle cx="213" cy="120" r="2.2" fill="url(#g)"/>
+</svg>
