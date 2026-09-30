@@ -1,8 +1,47 @@
-# Генеральная Ассамблея штата SWAG — электронная система голосования
+<div align="center">
 
-Официальная система рассмотрения законопроектов, инициатив и иных вопросов, вынесенных на голосование членов Генеральной Ассамблеи и Конгресса штата SWAG.
+# 🗳 Генеральная Ассамблея штата SWAG — электронная система голосования
 
-Участник получает от Спикера Конгресса персональную ссылку‑приглашение → проходит идентификацию → изучает законопроект → выбирает «ЗА / ПРОТИВ / ВОЗДЕРЖАЛСЯ» → подтверждает → получает номер регистрации голоса. После завершения система сама подводит итог по заданному правилу, формирует постановление и официальный протокол (PDF).
+**Голосование по законопроектам, поправкам, кадровым вопросам и инициативам** для Генеральной Ассамблеи и Конгресса RP-штата SWAG — с приглашениями, тайным режимом, автоматическим итогом и официальным протоколом в PDF.
+
+[![Открыть сайт](https://img.shields.io/badge/▶_Открыть_сайт-0d1a30?style=for-the-badge)](https://swag-vote.fegke15.workers.dev)
+
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare_Workers-F38020?logo=cloudflare&logoColor=white)
+![D1](https://img.shields.io/badge/D1_(SQLite)-003B57?logo=sqlite&logoColor=white)
+![Hono](https://img.shields.io/badge/Hono-E36002?logo=hono&logoColor=white)
+![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?logo=javascript&logoColor=black)
+![Тесты](https://img.shields.io/badge/тесты-29_e2e-2e7d32)
+
+<br>
+
+<img src="docs/screenshots/home.jpg" alt="Главная страница системы голосования" width="100%">
+
+</div>
+
+---
+
+Участник получает от Спикера Конгресса ссылку‑приглашение → проходит идентификацию → изучает законопроект → выбирает «ЗА / ПРОТИВ / ВОЗДЕРЖАЛСЯ» → подтверждает → получает номер регистрации голоса. После завершения система сама подводит итог по заданному правилу, формирует постановление и официальный протокол (PDF).
+
+## Скриншоты
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/confirm.jpg" alt="Подтверждение голоса"></td>
+    <td><img src="docs/screenshots/speaker-dashboard.jpg" alt="Панель Спикера"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Подтверждение голоса</sub></td>
+    <td align="center"><sub>Панель Спикера Конгресса</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/results.jpg" alt="Результаты голосования"></td>
+    <td><img src="docs/screenshots/protocol.jpg" alt="Официальный протокол"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Результаты и постановление</sub></td>
+    <td align="center"><sub>Официальный протокол</sub></td>
+  </tr>
+</table>
 
 ---
 
