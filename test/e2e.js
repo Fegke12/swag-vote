@@ -1,13 +1,18 @@
-'use strict';
 /**
- * Сквозная проверка серверной логики: node test/e2e.js
- * Поднимает сервер на временной БД и проверяет, что все ограничения соблюдаются на сервере.
+ * Сквозная проверка серверной логики: npm test
+ * Поднимает Worker локально (wrangler dev, локальная D1 во временной папке)
+ * и проверяет, что все ограничения соблюдаются на сервере.
  */
-const { spawn } = require('child_process');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const assert = require('assert');
+import { spawn, execFileSync } from 'node:child_process';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import assert from 'node:assert';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(__dirname, '..');
+const WRANGLER = path.join(ROOT, 'node_modules', '.bin', 'wrangler');
 
 const PORT = 3999;
 const BASE = `http://localhost:${PORT}`;
@@ -39,12 +44,13 @@ const iso = (ms) => new Date(Date.now() + ms).toISOString();
 const code = (r) => r.body?.error?.code;
 
 async function main() {
-  const srv = spawn(process.execPath, ['server.js'], {
-    cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT, DB_PATH: path.join(dir, 't.db'), SPEAKER_PASSWORD: 'secret-pass', SEED_DEMO: '0' },
-    stdio: 'ignore',
+  const srv = spawn(WRANGLER, ['dev', '--port', String(PORT), '--persist-to', dir, '--var', 'SEED_DEMO:0', '--var', 'SPEAKER_PASSWORD:secret-pass', '--var', 'SPEAKER_NAME:Тест'], {
+    cwd: ROOT, stdio: 'ignore', detached: true,
   });
-  for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/api/health'); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+  let up = false;
+  for (let i = 0; i < 300 && !up; i++) { try { up = (await fetch(BASE + '/api/health')).ok; } catch { await new Promise((r) => setTimeout(r, 200)); } }
+  if (!up) { console.error('Не удалось запустить wrangler dev'); process.kill(-srv.pid); process.exit(1); }
+  const d1 = (sql) => JSON.parse(execFileSync(WRANGLER, ['d1', 'execute', 'swag-vote', '--local', '--persist-to', dir, '--json', '--command', sql], { cwd: ROOT, encoding: 'utf8' }))[0].results;
 
   const admin = new Client();
   const anon = new Client();
@@ -146,9 +152,14 @@ async function main() {
       assert.strictEqual(r.body.results.tally.for, 1);
       assert.strictEqual(r.body.results.decision, 'rejected');
     });
-    await t('Протокол PDF формируется', async () => {
-      const r = await admin.get(`/api/admin/votes/${open.id}/protocol.pdf`);
-      assert.strictEqual(r.status, 200); assert.ok(String(r.body).startsWith('%PDF'));
+    await t('Протокол сформирован и доступен участнику', async () => {
+      const r = await p1.get(`/api/v/${invite.code}/protocol`);
+      assert.strictEqual(r.status, 200); assert.match(r.body.number, /^П-\d{6}$/); assert.ok(r.body.data.checksum);
+    });
+    await t('База сама блокирует голос в завершённом голосовании (триггер)', async () => {
+      let failed = false;
+      try { d1(`INSERT INTO ballots(vote_id, receipt_no, choice) VALUES (${Number(open.id)}, 'X1', 'for')`); } catch { failed = true; }
+      assert.ok(failed);
     });
 
     // ----- тайное голосование -----
@@ -170,10 +181,7 @@ async function main() {
       assert.ok(d.participants.every((p) => p.choice === null && p.receipt_no === null));
       assert.ok(d.log.filter((l) => l.action === 'ballot.cast').every((l) => !l.details.choice));
       assert.strictEqual((await admin.get(`/api/admin/votes/${sec.id}/export.csv`)).status, 403);
-      const Database = require('better-sqlite3');
-      const db = new Database(path.join(dir, 't.db'), { readonly: true });
-      const rows = db.prepare('SELECT participant_id, cast_at FROM ballots WHERE vote_id = ?').all(sec.id);
-      db.close();
+      const rows = d1(`SELECT participant_id, cast_at FROM ballots WHERE vote_id = ${Number(sec.id)}`);
       assert.ok(rows.length === 2 && rows.every((b) => b.participant_id === null && b.cast_at === null));
     });
     await t('Тайное: после завершения виден только подсчёт', async () => {
@@ -203,7 +211,7 @@ async function main() {
       assert.ok(!r.body.html.includes('<script>') && !r.body.html.includes('href="javascript'));
     });
   } finally {
-    srv.kill();
+    try { process.kill(-srv.pid); } catch {}
     fs.rmSync(dir, { recursive: true, force: true });
   }
 

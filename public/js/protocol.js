@@ -7,7 +7,7 @@
   const doc = $('#doc');
   $('#bar').innerHTML = `<a class="btn btn-sm" href="/speaker#/votes/${encodeURIComponent(id)}">${icon('back')} К голосованию</a><span class="spacer"></span>
     <button class="btn btn-sm" id="print">${icon('print')} Печать</button>
-    <a class="btn btn-sm btn-primary" href="/api/admin/votes/${encodeURIComponent(id)}/protocol.pdf">${icon('download')} Скачать протокол PDF</a>`;
+    <button class="btn btn-sm btn-primary" id="pdf" disabled>${icon('download')} Скачать протокол PDF</button>`;
   $('#print').addEventListener('click', () => window.print());
 
   let p;
@@ -17,6 +17,11 @@
       ${e.status === 401 ? ' <a href="/speaker">Войти в панель Спикера</a>' : ''}</div></div>`;
     return;
   }
+  $('#pdf').disabled = false;
+  $('#pdf').addEventListener('click', async () => {
+    $('#pdf').disabled = true;
+    try { await SWAG_PDF.download(p); } catch (e) { S.toast('Не удалось сформировать PDF', e.message, 'error'); } finally { $('#pdf').disabled = false; }
+  });
   const d = p.data, r = d.results, v = d.vote;
   document.title = `Протокол № ${d.number} — Генеральная Ассамблея штата SWAG`;
   const DEC = { adopted: 'ПРИНЯТО', rejected: 'НЕ ПРИНЯТО', pending: 'ОЖИДАЕТ ФИКСАЦИИ СПИКЕРОМ' };

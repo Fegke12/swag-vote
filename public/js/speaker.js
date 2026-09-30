@@ -6,13 +6,16 @@
   const root = $('#root');
 
   let me = null;
+  let configured = true;
   let meta = null;
   let counts = {};
 
   // ================= Вход =================
   async function boot() {
     try {
-      [meta, { user: me }] = await Promise.all([api('/meta'), api('/auth/me')]);
+      let who;
+      [meta, who] = await Promise.all([api('/meta'), api('/auth/me')]);
+      me = who.user; configured = who.configured !== false;
       S.syncClock(meta.server_time);
     } catch (e) { root.innerHTML = `<div class="login-form" style="min-height:100vh"><div class="notice notice-danger">${icon('alert')}<div><strong>${esc(e.title)}</strong>${esc(e.human)}</div></div></div>`; return; }
     if (!me) return renderLogin();
@@ -36,6 +39,7 @@
           <div class="eyebrow">Служебный вход</div>
           <h2>Авторизация</h2>
           <p class="muted" style="font-size:14px;margin-bottom:22px">Введите учётные данные Спикера Конгресса.</p>
+          ${configured ? '' : `<div class="notice notice-gold" style="margin-bottom:18px">${icon('info')}<div><strong>Пароль Спикера ещё не задан</strong>Добавьте секрет <span class="mono">SPEAKER_PASSWORD</span> в настройках Worker в Cloudflare (Settings → Variables and Secrets).</div></div>`}
           <div class="field"><label for="l-login">Логин</label><input class="input" id="l-login" name="login" autocomplete="username" required></div>
           <div class="field"><label for="l-pass">Пароль</label><input class="input" id="l-pass" name="password" type="password" autocomplete="current-password" required></div>
           <div class="notice notice-danger" id="l-err" hidden style="margin-bottom:16px"></div>
@@ -601,7 +605,7 @@
             <div style="font:700 18px var(--serif)">Протокол № ${esc(d.protocol.number)}</div>
             <div class="muted" style="font-size:12.5px">Сформирован ${S.fmtDate(d.protocol.created_at)}</div></div>
           <div class="btn-group"><a class="btn" href="/speaker/protocol/${v.id}" target="_blank">${icon('eye')} Открыть</a>
-            <a class="btn btn-primary" href="/api/admin/votes/${v.id}/protocol.pdf">${icon('download')} Скачать протокол PDF</a></div></div>` : ''}
+            <button class="btn btn-primary" data-pdf="${v.id}">${icon('download')} Скачать протокол PDF</button></div></div>` : ''}
 
         ${d.children.length ? `<h3 style="font-size:17px;margin:28px 0 12px">Связанные голосования</h3><ul class="attach-list">${d.children.map((c) => `<li><a href="#/votes/${c.id}">${icon(c.relation === 'amendment' ? 'branch' : 'repeat')}<span><b>№&nbsp;<span class="mono">${esc(c.number)}</span></b> · ${c.relation === 'amendment' ? 'поправка' : 'повторное'} · ${esc(c.title)}</span></a></li>`).join('')}</ul>` : ''}
       </div>
@@ -658,6 +662,10 @@
       reload();
     };
     $$('[data-a]', el).forEach((b) => b.addEventListener('click', () => act(b.dataset.a).catch(S.toastError)));
+    $$('[data-pdf]', el).forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await SWAG_PDF.download(d.protocol); } catch (e) { S.toast('Не удалось сформировать PDF', e.message, 'error'); } finally { b.disabled = false; }
+    }));
     $$('[data-dec]', el).forEach((b) => b.addEventListener('click', async () => {
       const dec = b.dataset.dec;
       if (!await S.confirmDialog({ title: 'Зафиксировать решение', text: `Решение «${dec === 'adopted' ? 'ПРИНЯТО' : 'НЕ ПРИНЯТО'}» будет внесено в протокол.`, confirmLabel: 'Зафиксировать' })) return;
@@ -746,7 +754,7 @@
         title: 'QR-код приглашения',
         body: `<div class="qr-box"><img src="/api/admin/invites/${id}/qr.svg" alt="QR-код приглашения ${esc(inv.code)}">
           <div class="code">${esc(inv.code)}</div><p class="muted" style="margin:0;text-align:center;font-size:13px">Голосование № ${esc(d.vote.number)} · ${esc(d.vote.title)}</p></div>`,
-        actions: [{ label: 'Закрыть', class: 'btn-ghost' }, { html: `${icon('download')} Скачать PNG`, class: 'btn-primary', onClick: () => { location.href = `/api/admin/invites/${id}/qr.png?download=1`; } }],
+        actions: [{ label: 'Закрыть', class: 'btn-ghost' }, { html: `${icon('download')} Скачать PNG`, class: 'btn-primary', close: false, onClick: () => qrPng(id, inv.code) }],
       });
     }
     if (a === 'revoke') {
@@ -765,6 +773,24 @@
         } }],
       });
     }
+  }
+
+  /** PNG-версия QR-кода для печати и отправки — рисуется в браузере из SVG. */
+  async function qrPng(id, code) {
+    const svg = await (await fetch(`/api/admin/invites/${id}/qr.svg`, { credentials: 'same-origin' })).text();
+    const img = new Image();
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const size = 1024, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, size, size); g.imageSmoothingEnabled = false;
+    g.drawImage(img, 0, 0, size, size);
+    URL.revokeObjectURL(url);
+    const a = document.createElement('a');
+    a.download = `SWAG-приглашение-${code}.png`;
+    a.href = cv.toDataURL('image/png');
+    a.click();
   }
 
   function newInviteModal(v) {

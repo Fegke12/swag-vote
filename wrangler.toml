@@ -1,0 +1,35 @@
+# Cloudflare Worker: Генеральная Ассамблея штата SWAG — электронная система голосования
+name = "swag-vote"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Статические страницы (HTML/CSS/JS/шрифты)
+[assets]
+directory = "./public"
+binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+not_found_handling = "none"
+
+# База данных D1. database_id — из Cloudflare Dashboard → Storage & databases → D1 → swag-vote
+[[d1_databases]]
+binding = "DB"
+database_name = "swag-vote"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# Раз в минуту: начало голосований, «осталось 30 минут», автозавершение и протоколы
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+SPEAKER_LOGIN = "speaker"
+SPEAKER_NAME = "Спикер Конгресса"
+DISPLAY_TZ = "Europe/Moscow"
+SEED_DEMO = "0"
+# PUBLIC_URL = "https://swag.example.com"   # если привяжете свой домен
+
+# Пароль Спикера — СЕКРЕТ, не храните его здесь:
+#   Dashboard → Workers → swag-vote → Settings → Variables and Secrets → Add → Secret → SPEAKER_PASSWORD
+
+[observability]
+enabled = true

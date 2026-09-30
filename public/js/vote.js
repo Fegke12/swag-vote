@@ -410,7 +410,7 @@
         : `<div class="notice notice-info" style="margin-top:20px">${icon('seal')}<div><strong>Голосование завершено</strong>Приём голосов прекращён. Новые голоса не принимаются.</div></div>`}
       ${r ? `<section class="card results">
         <div class="card-head"><h2>РЕЗУЛЬТАТЫ ГОЛОСОВАНИЯ</h2>
-          <div class="actions">${r.protocol ? `<a class="btn btn-sm" href="/api${base}/protocol.pdf">${icon('download')} Протокол PDF</a>` : ''}</div></div>
+          <div class="actions">${r.protocol ? `<button class="btn btn-sm" type="button" id="pdf">${icon('download')} Протокол PDF</button>` : ''}</div></div>
         <div class="card-body">
           <div class="results-grid">
             ${S.donut(r.tally, v.allow_abstain ? ['for', 'against', 'abstain'] : ['for', 'against'])}
@@ -442,6 +442,13 @@
         <p class="msg">Итоги голосования доводятся Спикером Конгресса в официальном порядке.</p></section>`}
       ${docCard(v)}`;
     bindCommon();
+    const pdfBtn = $('#pdf');
+    if (pdfBtn) pdfBtn.addEventListener('click', async () => {
+      pdfBtn.disabled = true;
+      try { await SWAG_PDF.download(await api(`${base}/protocol`)); }
+      catch (e) { S.toast(e.title || 'Не удалось сформировать PDF', e.human || e.message, 'error'); }
+      finally { pdfBtn.disabled = false; }
+    });
   }
 
   function votersList(list, secret) {
