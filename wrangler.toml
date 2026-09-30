@@ -15,7 +15,7 @@ not_found_handling = "none"
 [[d1_databases]]
 binding = "DB"
 database_name = "swag-vote"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "9b9b00ef-4781-470b-b38e-582f24247fd2"
 
 # Раз в минуту: начало голосований, «осталось 30 минут», автозавершение и протоколы
 [triggers]
