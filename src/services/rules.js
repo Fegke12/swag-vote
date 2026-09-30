@@ -1,4 +1,3 @@
-'use strict';
 /**
  * Правила принятия решения. Ни одно правило не зашито в код голосования:
  * Спикер задаёт правило при создании, оно хранится в votes.rule_json
@@ -14,7 +13,7 @@
  *   description                                     // пояснение Спикера (печатается в протоколе)
  * }
  */
-const { E, int, str } = require('../util');
+import { E, int, str } from '../lib/util.js';
 
 const RULE_TYPES = {
   simple_majority:    'Простое большинство',
@@ -157,4 +156,4 @@ function evaluate(rule, tally, invited, manualDecision = null) {
   };
 }
 
-module.exports = { RULE_TYPES, BASES, normalizeRule, describeRule, evaluate, plural };
+export { RULE_TYPES, BASES, normalizeRule, describeRule, evaluate, plural };

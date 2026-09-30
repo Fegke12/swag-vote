@@ -1,4 +1,3 @@
-'use strict';
 /** Справочники системы. Фронтенд получает их через GET /api/meta. */
 
 // Типы голосований. nom — предмет в тексте итога, adopted/rejected — согласованные формы.
@@ -57,4 +56,4 @@ const AUDIT_ACTIONS = {
   'export':              'Экспорт результатов',
 };
 
-module.exports = { VOTE_TYPES, STATUSES, CHOICES, POSITIONS, AUDIT_ACTIONS };
+export { VOTE_TYPES, STATUSES, CHOICES, POSITIONS, AUDIT_ACTIONS };

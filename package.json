@@ -2,25 +2,26 @@
   "name": "swag-vote",
   "version": "1.0.0",
   "description": "Электронная система голосования Генеральной Ассамблеи штата SWAG",
-  "main": "server.js",
+  "main": "src/worker.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
-    "seed": "node src/db/seed.js --force",
-    "test": "node test/e2e.js"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/e2e.js",
+    "build:vendor": "node scripts/vendor.js"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "better-sqlite3": "^13.0.3",
-    "cookie-parser": "^1.4.7",
-    "dejavu-fonts-ttf": "^2.37.3",
-    "express": "^5.2.1",
+    "hono": "^4.13.12",
     "marked": "^18.0.14",
-    "pdfkit": "^0.20.2",
     "qrcode": "^1.5.4"
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "devDependencies": {
+    "pdfmake": "^0.3.11",
+    "wrangler": "^4.144.0"
+  },
+  "type": "module"
 }
