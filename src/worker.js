@@ -345,6 +345,48 @@ api.post('/admin/participants/:id/reset', async (c) => {
   return c.json({ ok: true });
 });
 
+api.post('/admin/participants/:id/annul', async (c) => {
+  const db = c.get('db');
+  const p = await db.first('SELECT * FROM participants WHERE id = ?', pid(c));
+  if (!p) throw E.NOT_FOUND('Участник');
+  if (!p.has_voted) throw E.FORBIDDEN('Участник ещё не голосовал.');
+  const v = await votes.get(db, p.vote_id);
+  if (v.status === 'closed') throw E.FORBIDDEN('Голосование завершено — аннулирование невозможно.');
+  const stmts = [
+    db.stmt('UPDATE participants SET has_voted = 0, voted_at = NULL, receipt_no = NULL WHERE id = ?', p.id),
+    events.auditStmt(db, 'speaker', c.get('user').id, 'ballot.annulled', p.vote_id, { name: `${p.first_name} ${p.last_name}` }),
+  ];
+  if (v.secret) {
+    // В тайном голосовании бюллетень не привязан к участнику — невозможно определить, какой удалять
+    // Удаляем участника целиком, чтобы он прошёл идентификацию заново
+    stmts.push(db.stmt('DELETE FROM notifications WHERE participant_id = ?', p.id));
+    stmts.push(db.stmt('UPDATE comments SET participant_id = NULL WHERE participant_id = ?', p.id));
+    stmts.push(db.stmt('DELETE FROM participants WHERE id = ?', p.id));
+    stmts.push(db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id));
+  } else {
+    stmts.push(db.stmt('DELETE FROM ballots WHERE participant_id = ?', p.id));
+  }
+  await db.batch(stmts);
+  return c.json({ ok: true });
+});
+
+api.post('/admin/participants/:id/remove', async (c) => {
+  const db = c.get('db');
+  const p = await db.first('SELECT * FROM participants WHERE id = ?', pid(c));
+  if (!p) throw E.NOT_FOUND('Участник');
+  const v = await votes.get(db, p.vote_id);
+  if (v.status === 'closed') throw E.FORBIDDEN('Голосование завершено — удаление невозможно.');
+  await db.batch([
+    db.stmt('DELETE FROM ballots WHERE participant_id = ?', p.id),
+    db.stmt('DELETE FROM notifications WHERE participant_id = ?', p.id),
+    db.stmt('UPDATE comments SET participant_id = NULL WHERE participant_id = ?', p.id),
+    db.stmt('DELETE FROM participants WHERE id = ?', p.id),
+    db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id),
+    events.auditStmt(db, 'speaker', c.get('user').id, 'participant.removed', p.vote_id, { name: `${p.first_name} ${p.last_name}`, had_voted: !!p.has_voted }),
+  ]);
+  return c.json({ ok: true });
+});
+
 api.post('/admin/votes/:id/attachments', async (c) => {
   const db = c.get('db');
   const v = await votes.mustGet(db, pid(c));

@@ -245,7 +245,8 @@
   const ACTION_ICON = {
     'ballot.cast': ['check', 'g'], 'vote.created': ['plus', 'y'], 'vote.closed': ['seal', ''], 'vote.closed_early': ['stop', ''],
     'vote.cancelled': ['ban', 'r'], 'invite.revoked': ['ban', 'r'], 'invite.created': ['link', 'y'], 'protocol.created': ['doc', 'y'],
-    'participant.identified': ['idcard', ''], 'vote.updated': ['edit', ''], 'vote.rescheduled': ['calendar', ''], 'auth.login': ['lock', ''],
+    'participant.identified': ['idcard', ''], 'ballot.annulled': ['x', 'r'], 'participant.removed': ['trash', 'r'],
+    'vote.updated': ['edit', ''], 'vote.rescheduled': ['calendar', ''], 'auth.login': ['lock', ''],
   };
   function actor(a) {
     if (a.actor_type === 'system') return 'Система';
@@ -823,7 +824,10 @@
           ${v.secret ? '' : `<td data-l="Голос">${p.choice ? `<b class="c-${p.choice}">${S.CHOICE[p.choice]}</b>` : '—'}</td>`}
           <td data-l="Время" class="nowrap">${S.fmtDate(p.voted_at || p.identified_at)}</td>
           <td data-l="Статус">${p.has_voted ? '<span class="c-for" style="font-weight:600">✓ проголосовал</span>' : '<span class="muted" style="font-weight:600">◷ ожидает голосования</span>'}</td>
-          <td>${!p.has_voted && !['closed', 'cancelled'].includes(v.status) ? `<button class="btn btn-sm btn-ghost" data-reset="${p.id}" title="Сбросить идентификацию">${icon('refresh')}</button>` : ''}</td>
+          <td style="white-space:nowrap">${!['closed', 'cancelled'].includes(v.status) ? (p.has_voted
+            ? `<button class="btn btn-sm btn-ghost" data-annul="${p.id}" title="Аннулировать голос">${icon('x')}</button>`
+            : `<button class="btn btn-sm btn-ghost" data-reset="${p.id}" title="Сбросить идентификацию">${icon('refresh')}</button>`)
+            + `<button class="btn btn-sm btn-ghost" data-remove="${p.id}" title="Удалить участника" style="color:var(--red)">${icon('trash')}</button>` : ''}</td>
         </tr>`).join('')}</tbody></table></div>` : `<div class="empty">${icon('users')}Участники ещё не проходили идентификацию</div>`}
       <div class="card-body" style="border-top:1px solid var(--line-2);font-size:13px;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap">
         <span>Проголосовали: <b style="color:var(--ink)">${s.voted}</b></span>
@@ -833,6 +837,14 @@
     $$('[data-reset]', el).forEach((b) => b.addEventListener('click', async () => {
       if (!await S.confirmDialog({ title: 'Сбросить идентификацию?', text: 'Участник сможет заново пройти идентификацию по приглашению (например, если утратил доступ с устройства). Проголосовавших сбросить нельзя.', confirmLabel: 'Сбросить' })) return;
       try { await api(`/admin/participants/${b.dataset.reset}/reset`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
+    }));
+    $$('[data-annul]', el).forEach((b) => b.addEventListener('click', async () => {
+      if (!await S.confirmDialog({ title: 'Аннулировать голос?', text: 'Голос участника будет аннулирован и удалён из подсчёта. Участник сможет проголосовать заново (в открытом голосовании) или будет удалён (в тайном).', confirmLabel: 'Аннулировать', danger: true })) return;
+      try { await api(`/admin/participants/${b.dataset.annul}/annul`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
+    }));
+    $$('[data-remove]', el).forEach((b) => b.addEventListener('click', async () => {
+      if (!await S.confirmDialog({ title: 'Удалить участника?', text: 'Участник и его голос (если есть) будут полностью удалены. Действие необратимо.', confirmLabel: 'Удалить', danger: true })) return;
+      try { await api(`/admin/participants/${b.dataset.remove}/remove`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
     }));
   }
 
