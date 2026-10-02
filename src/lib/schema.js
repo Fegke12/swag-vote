@@ -7,9 +7,10 @@
  * Важные ограничения целостности обеспечивает САМА база (триггеры), а не только код:
  *   - голос принимается только в активном голосовании;
  *   - участник не может проголосовать дважды;
- *   - приглашение нельзя использовать сверх лимита, после срока или после отзыва.
+ *   - приглашение нельзя использовать сверх лимита, после срока или после отзыва;
+ *   - участник, не допущенный Спикером, проголосовать не может.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 
@@ -34,7 +35,8 @@ export const SCHEMA = [
     allow_comments INTEGER NOT NULL DEFAULT 0, expected_participants INTEGER,
     parent_id INTEGER REFERENCES votes(id), relation TEXT,
     closed_at TEXT, closed_early INTEGER NOT NULL DEFAULT 0, cancelled_at TEXT, cancel_reason TEXT,
-    manual_decision TEXT, created_by INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    manual_decision TEXT, created_by INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    approval INTEGER NOT NULL DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS idx_votes_dates ON votes(starts_at, ends_at)`,
 
   `CREATE TABLE IF NOT EXISTS bill_revisions (
@@ -50,7 +52,8 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS invites (
     id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, vote_id INTEGER NOT NULL REFERENCES votes(id) ON DELETE CASCADE,
     label TEXT NOT NULL DEFAULT '', expires_at TEXT NOT NULL, max_uses INTEGER, uses INTEGER NOT NULL DEFAULT 0,
-    one_per_device INTEGER NOT NULL DEFAULT 1, revoked_at TEXT, created_by INTEGER, created_at TEXT NOT NULL)`,
+    one_per_device INTEGER NOT NULL DEFAULT 1, revoked_at TEXT, created_by INTEGER, created_at TEXT NOT NULL,
+    person_json TEXT)`,
   `CREATE INDEX IF NOT EXISTS idx_invites_vote ON invites(vote_id)`,
 
   // Факт идентификации и участия. Выбор здесь НЕ хранится.
@@ -60,7 +63,7 @@ export const SCHEMA = [
     position_kind TEXT NOT NULL, position_title TEXT NOT NULL, organization TEXT NOT NULL DEFAULT '',
     division TEXT NOT NULL DEFAULT '', name_key TEXT NOT NULL, session_hash TEXT NOT NULL UNIQUE,
     device_hash TEXT, identified_at TEXT NOT NULL, has_voted INTEGER NOT NULL DEFAULT 0,
-    voted_at TEXT, receipt_no TEXT, UNIQUE (vote_id, name_key))`,
+    voted_at TEXT, receipt_no TEXT, approved INTEGER NOT NULL DEFAULT 1, UNIQUE (vote_id, name_key))`,
   `CREATE INDEX IF NOT EXISTS idx_participants_vote ON participants(vote_id)`,
 
   // Бюллетени. В тайном голосовании participant_id и cast_at = NULL, id и номер случайные.
@@ -108,4 +111,23 @@ export const SCHEMA = [
 
   `CREATE TRIGGER IF NOT EXISTS trg_invite_use AFTER INSERT ON participants
    BEGIN UPDATE invites SET uses = uses + 1 WHERE id = NEW.invite_id; END`,
+];
+
+/**
+ * Миграции для уже существующей базы: новые столбцы. Выполняются по одной;
+ * ошибка «duplicate column name» означает, что столбец уже есть, и пропускается.
+ */
+export const MIGRATIONS = [
+  // Допуск участников: 0 — автоматически, 1 — после одобрения Спикером
+  `ALTER TABLE votes ADD COLUMN approval INTEGER NOT NULL DEFAULT 0`,
+  // Именное приглашение: данные участника заданы Спикером (JSON), NULL — общая ссылка
+  `ALTER TABLE invites ADD COLUMN person_json TEXT`,
+  // 1 — допущен, 0 — заявка ожидает решения Спикера, -1 — заявка отклонена
+  `ALTER TABLE participants ADD COLUMN approved INTEGER NOT NULL DEFAULT 1`,
+];
+
+/** Применяется после миграций: ссылается на новые столбцы. */
+export const SCHEMA_POST = [
+  `CREATE TRIGGER IF NOT EXISTS trg_vote_approved BEFORE UPDATE OF has_voted ON participants
+   WHEN NEW.has_voted = 1 AND OLD.approved <> 1 BEGIN SELECT RAISE(ABORT, 'SWAG_NOT_APPROVED'); END`,
 ];

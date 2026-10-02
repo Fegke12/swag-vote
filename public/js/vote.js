@@ -27,7 +27,7 @@
       if (!quiet) renderError({ title: e.title, message: e.human, code: e.code }, null);
     }
   }
-  const sig = (s) => [s.ok, s.error?.code, s.vote?.status, s.participant?.identified, s.participant?.has_voted, s.vote?.revision, s.vote?.ends_at];
+  const sig = (s) => [s.ok, s.error?.code, s.vote?.status, s.participant?.identified, s.participant?.has_voted, s.participant?.admission, s.vote?.revision, s.vote?.ends_at];
 
   // ---------- общие блоки ----------
   function voteHeader(v) {
@@ -57,7 +57,7 @@
     return `<div class="whoami">
       <div class="avatar">${esc(initials)}</div>
       <div><div class="n">${esc(p.name)}</div><div class="p">${esc(p.position)}</div></div>
-      <span class="tag">${p.has_voted ? 'Голос зарегистрирован' : 'Участник голосования'}</span>
+      <span class="tag">${p.has_voted ? 'Голос зарегистрирован' : p.admission === 'pending' ? 'Ожидает допуска' : p.admission === 'rejected' ? 'Не допущен' : 'Участник голосования'}</span>
     </div>`;
   }
 
@@ -137,6 +137,7 @@
     }
     if (!s.participant.identified) return renderIdentify(s);
     if (s.participant.has_voted) return renderVoted(s);
+    if (s.participant.admission !== 'approved') return renderAdmission(s);
     return renderBallot(s);
   }
 
@@ -163,9 +164,36 @@
     const r = $('#retry'); if (r) r.addEventListener('click', () => load());
   }
 
+  // ----- Допуск Спикером: заявка на рассмотрении или отклонена -----
+  let admissionTimer = null;
+  function renderAdmission(s) {
+    const v = s.vote, p = s.participant;
+    const rejected = p.admission === 'rejected';
+    app.innerHTML = `
+      ${voteHeader(v)}
+      <section class="card state-screen" style="margin-top:20px;max-width:none">
+        <div class="state-icon ${rejected ? 'bad' : 'gold'}">${icon(rejected ? 'ban' : 'clock')}</div>
+        <h1>${rejected ? 'Заявка отклонена' : 'Заявка на рассмотрении'}</h1>
+        <p class="msg">${rejected
+          ? 'Спикер Конгресса не допустил вас к этому голосованию. Если это ошибка — свяжитесь со Спикером Конгресса.'
+          : 'Спикер Конгресса проверяет ваши сведения. Как только вас допустят, на этой странице появится бюллетень — обновлять её не нужно. Пока можно ознакомиться с материалами.'}</p>
+      </section>
+      ${whoami(p)}
+      ${docCard(v)}`;
+    bindCommon();
+    // пока заявка ждёт решения, проверяем чаще обычного
+    if (!rejected && !admissionTimer) {
+      admissionTimer = setInterval(() => {
+        if (state?.participant?.admission !== 'pending') { clearInterval(admissionTimer); admissionTimer = null; return; }
+        load({ quiet: true });
+      }, 7000);
+    }
+  }
+
   // ----- Идентификация -----
   function renderIdentify(s) {
     const v = s.vote;
+    if (s.person) return renderPersonal(s);
     app.innerHTML = `<div class="identify">
       <section class="card"><div class="card-pad">
         <div class="identify-head">
@@ -175,6 +203,7 @@
         </div>
         <div class="vote-ref"><span class="vnum">№&nbsp;<b class="mono">${esc(v.number)}</b></span><span class="ttl">${esc(v.title)}</span>${S.statusPill(v.status)}</div>
         ${v.status === 'pending' ? `<div class="notice notice-gold" style="margin-bottom:22px">${icon('clock')}<div><strong>Голосование ещё не началось</strong>Приём голосов откроется ${S.fmtLong(v.starts_at)}. Вы можете пройти идентификацию и заранее ознакомиться с материалами.</div></div>` : ''}
+        ${v.approval ? `<div class="notice notice-info" style="margin-bottom:22px">${icon('idcard')}<div><strong>Допуск по решению Спикера</strong>После идентификации ваши сведения проверит Спикер Конгресса. Голосовать можно будет после его одобрения.</div></div>` : ''}
         <form id="id-form" novalidate>
           <div class="grid-2">
             <div class="field"><label for="f-first">Имя<span class="req">*</span></label><input class="input" id="f-first" name="first_name" autocomplete="given-name" maxlength="60" required></div>
@@ -258,6 +287,51 @@
       } finally { btn.disabled = false; }
     });
     setTimeout(() => $('#f-first')?.focus(), 50);
+  }
+
+  // ----- Именное приглашение: данные участника задал Спикер, их нужно только подтвердить -----
+  function renderPersonal(s) {
+    const v = s.vote, who = s.person;
+    app.innerHTML = `<div class="identify">
+      <section class="card"><div class="card-pad">
+        <div class="identify-head">
+          <img src="/img/emblem.svg" alt="">
+          <div><div class="eyebrow">Шаг 1 из 2</div><h1>Именное приглашение</h1>
+          <p>Эта ссылка выдана Спикером Конгресса лично вам. Вводить сведения не нужно — проверьте их и подтвердите.</p></div>
+        </div>
+        <div class="vote-ref"><span class="vnum">№&nbsp;<b class="mono">${esc(v.number)}</b></span><span class="ttl">${esc(v.title)}</span>${S.statusPill(v.status)}</div>
+        ${v.status === 'pending' ? `<div class="notice notice-gold" style="margin-bottom:22px">${icon('clock')}<div><strong>Голосование ещё не началось</strong>Приём голосов откроется ${S.fmtLong(v.starts_at)}.</div></div>` : ''}
+        <div class="position-preview" style="margin-bottom:20px"><div style="font-size:18px;font-weight:700;color:var(--ink)">${esc(who.name)}</div><div style="margin-top:4px">${esc(who.position)}</div></div>
+        <form id="id-form" novalidate>
+          <div class="confirm-box field" data-f="confirm" style="margin-bottom:0">
+            <label class="check"><input type="checkbox" name="confirm" id="f-confirm"><span>Подтверждаю, что это я и приглашение выдано мне.</span></label>
+          </div>
+          <div class="notice notice-danger" id="id-error" style="margin-top:18px" hidden></div>
+          <div style="display:flex;justify-content:flex-end;margin-top:22px">
+            <button class="btn btn-primary btn-lg" type="submit" id="id-submit">Продолжить</button>
+          </div>
+        </form>
+      </div></section>
+      <p class="muted" style="font-size:12.5px;text-align:center;margin-top:16px">Ссылка одноразовая: после подтверждения она закрепляется за этим устройством. Не передавайте её другим.</p>
+    </div>`;
+    const form = $('#id-form');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $$('.has-error', form).forEach((x) => x.classList.remove('has-error'));
+      $$('.field-error', form).forEach((x) => x.remove());
+      const errBox = $('#id-error'); errBox.hidden = true;
+      if (!$('#f-confirm').checked) return markError(form, 'confirm', 'Подтвердите, что приглашение выдано вам.');
+      const btn = $('#id-submit'); btn.disabled = true;
+      try {
+        await api(`${base}/identify`, { method: 'POST', body: { confirm: true } });
+        await load();
+        window.scrollTo({ top: 0 });
+      } catch (err) {
+        errBox.hidden = false;
+        errBox.innerHTML = `${icon('alert')}<div><strong>${esc(err.title)}</strong>${esc(err.human)}</div>`;
+        if (['VOTE_CLOSED', 'VOTE_CANCELLED', 'INVITE_EXPIRED', 'INVITE_REVOKED', 'INVITE_EXHAUSTED', 'ALREADY_VOTED'].includes(err.code)) setTimeout(() => load(), 2500);
+      } finally { btn.disabled = false; }
+    });
   }
 
   function markError(form, field, msg) {
@@ -534,7 +608,7 @@
       if (!first) {
         items.slice().reverse().forEach((n) => S.toast(n.title, n.body));
         $('#bell-badge').hidden = false; $('#bell-badge').textContent = items.length;
-        if (items.some((n) => ['closed', 'started', 'cancelled', 'text_changed', 'rescheduled'].includes(n.kind))) load({ quiet: true });
+        if (items.some((n) => ['closed', 'started', 'cancelled', 'text_changed', 'rescheduled', 'admission'].includes(n.kind))) load({ quiet: true });
       }
     } catch { /* сеть недоступна — повторим позже */ }
   }

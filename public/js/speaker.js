@@ -245,7 +245,8 @@
   const ACTION_ICON = {
     'ballot.cast': ['check', 'g'], 'vote.created': ['plus', 'y'], 'vote.closed': ['seal', ''], 'vote.closed_early': ['stop', ''],
     'vote.cancelled': ['ban', 'r'], 'invite.revoked': ['ban', 'r'], 'invite.created': ['link', 'y'], 'protocol.created': ['doc', 'y'],
-    'participant.identified': ['idcard', ''], 'ballot.annulled': ['x', 'r'], 'participant.removed': ['trash', 'r'],
+    'participant.identified': ['idcard', ''], 'participant.applied': ['idcard', 'y'], 'participant.approved': ['check', 'g'],
+    'participant.rejected': ['ban', 'r'], 'participant.removed': ['trash', 'r'], 'invite.personal': ['link', 'y'],
     'vote.updated': ['edit', ''], 'vote.rescheduled': ['calendar', ''], 'auth.login': ['lock', ''],
   };
   function actor(a) {
@@ -346,7 +347,7 @@
       starts_at: new Date(Math.ceil((now + 5 * 60e3) / 300000) * 300000).toISOString(),
       ends_at: new Date(Math.ceil((now + 24 * 3600e3) / 300000) * 300000).toISOString(),
       rule: parent?.rule || { type: 'simple_majority', base: 'cast', quorum_type: 'none' },
-      secret: false, allow_abstain: true, show_results: true, show_voter_list: false, allow_comments: false,
+      secret: false, allow_abstain: true, show_results: true, show_voter_list: false, allow_comments: false, approval: false,
       expected_participants: parent?.expected_participants ?? '',
     };
     if (mode === 'amendment' && parent) {
@@ -432,6 +433,7 @@
           ${sw('show_results', 'Показывать результаты участникам', 'Итоги и постановление станут доступны по ссылке после завершения', d.show_results)}
           ${sw('show_voter_list', 'Разрешить просмотр списка проголосовавших', 'Участники увидят список; в тайном голосовании — без выбранных вариантов', d.show_voter_list)}
           ${sw('allow_comments', 'Обсуждение перед голосованием', 'Участники могут оставлять комментарии к тексту до окончания голосования', d.allow_comments)}
+          ${sw('approval', 'Допуск участников после одобрения Спикером', 'По общей ссылке участник подаёт заявку и сможет голосовать только после вашего одобрения. Именные ссылки допуска не требуют', d.approval)}
         </div>
 
         ${mode !== 'edit' ? `<div class="form-section">
@@ -490,7 +492,7 @@
         type: f.type.value, title: f.title.value, initiator: f.initiator.value, hint: f.hint.value,
         description: f.description.value, body: f.body.value,
         ends_at: S.fromLocalInput(f.ends_at.value),
-        show_results: f.show_results.checked, show_voter_list: f.show_voter_list.checked, allow_comments: f.allow_comments.checked,
+        show_results: f.show_results.checked, show_voter_list: f.show_voter_list.checked, allow_comments: f.allow_comments.checked, approval: f.approval.checked,
       };
       if (!started) {
         Object.assign(body, {
@@ -622,6 +624,7 @@
             <dt>Правило принятия</dt><dd>${esc(v.rule_text)}</dd>
             <dt>Режим</dt><dd>${v.secret ? 'Тайное' : 'Открытое'} · «Воздержался» ${v.allow_abstain ? 'разрешён' : 'не допускается'}</dd>
             <dt>Публикация</dt><dd>Результаты: ${v.show_results ? 'показываются' : 'скрыты'} · Список: ${v.show_voter_list ? 'открыт' : 'скрыт'}</dd>
+            <dt>Допуск участников</dt><dd>${v.approval ? 'После одобрения Спикером' : 'Автоматически, по ссылке'}</dd>
           </dl>
         </div></div>
         <div class="card side-card" style="margin-top:16px"><div class="card-body">
@@ -708,6 +711,7 @@
     const v = d.vote;
     const canCreate = !['closed', 'cancelled'].includes(v.status);
     const main = d.invites.find((i) => ['active', 'pending'].includes(i.status));
+    const personal = d.invites.filter((i) => i.personal), common = d.invites.filter((i) => !i.personal);
     el.innerHTML = `<div class="card-body">
       ${q.created && main ? `<div class="success-hero">
         <div class="state-icon ok">${icon('check')}</div>
@@ -717,32 +721,43 @@
       </div>` : ''}
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
         <h3 style="font-size:17px">Приглашения</h3>
-        ${canCreate ? `<button class="btn btn-sm" style="margin-left:auto" id="new-inv">${icon('plus')} Создать новую ссылку</button>` : ''}
+        <span style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+          ${personal.length ? `<button class="btn btn-sm" id="copy-personal">${icon('copy')} Скопировать именные ссылки</button>` : ''}
+          ${canCreate ? `<button class="btn btn-sm" id="new-personal">${icon('idcard')} Именные ссылки</button>
+          <button class="btn btn-sm" id="new-inv">${icon('plus')} Создать общую ссылку</button>` : ''}
+        </span>
       </div>
-      ${d.invites.map((i) => inviteBox(i, v)).join('') || '<div class="empty">Приглашений нет</div>'}
+      ${common.map((i) => inviteBox(i, v)).join('')}
+      ${personal.length ? `<h3 style="font-size:15px;margin:22px 0 4px">Именные приглашения <span class="muted" style="font-weight:500">· ${personal.filter((i) => i.uses).length} из ${personal.length} использовано</span></h3>
+        <p class="muted" style="font-size:13px;margin:0 0 12px">Каждая ссылка выдана одному участнику и работает один раз. Отправляйте их лично.</p>
+        ${personal.map((i) => inviteBox(i, v)).join('')}` : ''}
+      ${d.invites.length ? '' : '<div class="empty">Приглашений нет</div>'}
     </div>`;
     $$('.invite-url input', el).forEach((i) => i.addEventListener('focus', () => i.select()));
     $$('[data-inv]', el).forEach((b) => b.addEventListener('click', () => inviteAction(b.dataset.inv, Number(b.dataset.id), d).catch(S.toastError)));
     const n = $('#new-inv'); if (n) n.addEventListener('click', () => newInviteModal(v));
+    const np = $('#new-personal'); if (np) np.addEventListener('click', () => personalInvitesModal(v));
+    const cp = $('#copy-personal'); if (cp) cp.addEventListener('click', () => S.copyText(
+      personal.filter((i) => !i.revoked_at).map((i) => `${i.person.name} — ${i.url}`).join('\n')));
   }
 
   function inviteBox(i, v) {
     const live = ['active', 'pending'].includes(i.status);
     const st = { active: 'active', pending: 'pending', revoked: 'cancelled', expired: 'closed', exhausted: 'closed', closed: 'closed', cancelled: 'cancelled' }[i.status];
     return `<div class="invite-box">
-      <div class="invite-top"><b>${esc(i.label)}</b>${S.statusPill(st, i.status_label)}<span class="mono muted" style="margin-left:auto;font-size:13px">ID ${esc(i.code)}</span></div>
+      <div class="invite-top"><b>${esc(i.label)}</b>${i.personal ? `<span class="muted" style="font-size:13px">${esc(i.person.position)}</span>` : ''}${S.statusPill(i.personal && i.uses ? 'active' : st, i.personal && i.uses ? 'Использовано' : i.status_label)}<span class="mono muted" style="margin-left:auto;font-size:13px">ID ${esc(i.code)}</span></div>
       <div class="invite-url"><input readonly value="${esc(i.url)}" aria-label="Ссылка-приглашение">
         <button class="btn" data-inv="copy" data-id="${i.id}">${icon('copy')} Копировать ссылку</button></div>
       <div class="invite-meta">
         <span>Создано: <b>${S.fmtDate(i.created_at)}</b></span>
         <span>Действует до: <b>${S.fmtDate(i.expires_at)}</b></span>
-        <span>Использовано: <b>${i.uses}${i.max_uses ? ` из ${i.max_uses}` : ' (без ограничения)'}</b></span>
-        <span>Повторное использование: <b>${i.one_per_device ? 'ограничено' : 'разрешено'}</b></span>
+        ${i.personal ? '' : `<span>Использовано: <b>${i.uses}${i.max_uses ? ` из ${i.max_uses}` : ' (без ограничения)'}</b></span>
+        <span>Повторное использование: <b>${i.one_per_device ? 'ограничено' : 'разрешено'}</b></span>`}
         ${i.revoked_at ? `<span>Отозвано: <b>${S.fmtDate(i.revoked_at)}</b></span>` : ''}
       </div>
       <div class="invite-actions">
         <button class="btn btn-sm" data-inv="qr" data-id="${i.id}">${icon('qr')} Создать QR-код</button>
-        ${live || i.status === 'expired' || i.status === 'exhausted' ? `<button class="btn btn-sm" data-inv="extend" data-id="${i.id}">${icon('calendar')} Продлить срок действия</button>` : ''}
+        ${!i.personal && (live || i.status === 'expired' || i.status === 'exhausted') ? `<button class="btn btn-sm" data-inv="extend" data-id="${i.id}">${icon('calendar')} Продлить срок действия</button>` : ''}
         ${!i.revoked_at && !['closed', 'cancelled'].includes(i.status) ? `<button class="btn btn-sm btn-danger" data-inv="revoke" data-id="${i.id}">${icon('ban')} Отозвать приглашение</button>` : ''}
       </div></div>`;
   }
@@ -809,42 +824,92 @@
     });
   }
 
+  /** Именные приглашения: список участников задаёт Спикер, каждому — своя одноразовая ссылка. */
+  function parsePeople(text) {
+    return text.split('\n').map((l) => l.trim()).filter(Boolean).map((line, i) => {
+      const [name = '', pos = '', org = '', div = ''] = line.split(';').map((x) => x.trim());
+      const words = name.split(/\s+/).filter(Boolean);
+      if (words.length < 2) throw Object.assign(new Error('format'), { title: 'Проверьте список', human: `Строка ${i + 1}: укажите имя и фамилию.` });
+      const low = pos.toLowerCase();
+      const kind = low === 'лидер' ? 'leader' : ['заместитель', 'зам', 'зам.'].includes(low) ? 'deputy' : 'custom';
+      if (kind === 'custom' && !pos) throw Object.assign(new Error('format'), { title: 'Проверьте список', human: `Строка ${i + 1}: укажите должность после «;».` });
+      return { first_name: words[0], last_name: words.slice(1).join(' '), position_kind: kind, position_title: kind === 'custom' ? pos : '', organization: org, division: div };
+    });
+  }
+  function personalInvitesModal(v) {
+    S.modal({
+      title: 'Именные ссылки',
+      body: `<p style="margin:0 0 14px;color:var(--ink-2)">Впишите участников — по одному в строке. Каждый получит личную одноразовую ссылку: вводить данные ему не придётся, а посторонний по ней под чужим именем не войдёт.</p>
+        <div class="field"><label>Участники</label>
+          <textarea class="input" id="pi-t" rows="8" style="font-family:var(--mono, monospace);font-size:13px" placeholder="Имя Фамилия; Должность; Департамент; Подразделение\nJohn Smith; Лидер; LSPD; Patrol Division\nAnna Lee; Заместитель; FBI; HQ\nMark Stone; Секретарь Конгресса"></textarea></div>
+        <p class="muted" style="font-size:12.5px;margin:0">Должность «Лидер» или «Заместитель» требует департамент и подразделение. Любая другая должность записывается как есть, остальное — по желанию.</p>`,
+      actions: [{ label: 'Отмена', class: 'btn-ghost' }, { label: 'Создать ссылки', class: 'btn-primary', onClick: async ({ body }) => {
+        const people = parsePeople($('#pi-t', body).value);
+        if (!people.length) throw Object.assign(new Error('empty'), { title: 'Список пуст', human: 'Добавьте хотя бы одного участника.' });
+        const r = await api(`/admin/votes/${v.id}/invites/personal`, { method: 'POST', body: { people } });
+        S.toast(`Создано именных ссылок: ${r.invites.length}`, '', 'success'); reload();
+      } }],
+    });
+  }
+
   // ----- Участники -----
   function tabParticipants(el, d) {
     const v = d.vote, s = d.summary;
-    const waitingIdent = Math.max(0, (v.expected_participants || 0) - d.participants.length);
+    const open = !['closed', 'cancelled'].includes(v.status);
+    const admitted = d.participants.filter((p) => p.admission === 'approved');
+    const pending = d.participants.filter((p) => p.admission === 'pending');
+    const listed = d.participants.filter((p) => p.admission !== 'pending');
+    const waitingIdent = Math.max(0, (v.expected_participants || 0) - admitted.length);
+    const status = (p) => p.admission === 'rejected' ? '<span class="c-against" style="font-weight:600">✕ заявка отклонена</span>'
+      : p.has_voted ? '<span class="c-for" style="font-weight:600">✓ проголосовал</span>' : '<span class="muted" style="font-weight:600">◷ ожидает голосования</span>';
+    const actions = (p) => {
+      if (!open) return '';
+      let h = '';
+      if (p.admission === 'rejected') h += `<button class="btn btn-sm btn-ghost" data-approve="${p.id}" title="Всё-таки допустить" aria-label="Допустить участника">${icon('check')}</button>`;
+      // В тайном голосовании голос проголосовавшего убрать нельзя — бюллетень с ним не связан
+      if (!(v.secret && p.has_voted)) h += `<button class="btn btn-sm btn-ghost" data-remove="${p.id}" data-voted="${p.has_voted ? 1 : ''}" title="Удалить участника" aria-label="Удалить участника" style="color:var(--red)">${icon('trash')}</button>`;
+      return h;
+    };
     el.innerHTML = `
-      ${v.secret ? `<div class="card-body" style="padding-bottom:0"><div class="notice notice-gold">${icon('lock')}<div><strong>Тайное голосование</strong>Список показывает только факт участия. Выбор участников хранится отдельно и не может быть сопоставлен с ними.</div></div></div>` : ''}
-      ${d.participants.length ? `<div class="table-wrap"><table class="table responsive"><thead><tr>
+      ${v.secret ? `<div class="card-body" style="padding-bottom:0"><div class="notice notice-gold">${icon('lock')}<div><strong>Тайное голосование</strong>Список показывает только факт участия. Выбор участников хранится отдельно и не может быть сопоставлен с ними — поэтому удалить можно только того, кто ещё не голосовал.</div></div></div>` : ''}
+      ${pending.length ? `<div class="card-body" style="padding-bottom:0">
+        <h3 style="font-size:16px;margin:0 0 4px">Заявки на участие · ${pending.length}</h3>
+        <p class="muted" style="font-size:13px;margin:0 0 12px">Эти участники не смогут голосовать, пока вы их не допустите.</p>
+        ${pending.map((p) => `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r);margin-bottom:8px;background:var(--gold-soft)">
+          <div style="flex:1;min-width:180px"><div style="font-weight:700;overflow-wrap:anywhere">${esc(p.name)}</div>
+            <div class="muted" style="font-size:13px;overflow-wrap:anywhere">${esc([p.position_title, p.organization, p.division].filter(Boolean).join(' — '))} · ${S.fmtDate(p.identified_at)}</div></div>
+          ${open ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-sm btn-primary" data-approve="${p.id}">${icon('check')} Допустить</button>
+            <button class="btn btn-sm btn-danger" data-reject="${p.id}">${icon('ban')} Отклонить</button></div>` : ''}
+        </div>`).join('')}</div>` : ''}
+      ${listed.length ? `<div class="table-wrap"><table class="table responsive"><thead><tr>
         <th>ФИО</th><th>Должность</th><th>Организация</th>${v.secret ? '' : '<th>Голос</th>'}<th>Время</th><th>Статус</th><th></th></tr></thead><tbody>
-        ${d.participants.map((p) => `<tr>
+        ${listed.map((p) => `<tr>
           <td class="cell-title"><span class="t-title">${esc(p.name)}</span>${p.receipt_no ? `<div class="t-sub mono">#${esc(p.receipt_no)}</div>` : ''}</td>
           <td data-l="Должность">${esc(p.position_title)}</td>
           <td data-l="Организация">${esc([p.organization, p.division].filter(Boolean).join(' — ') || '—')}</td>
           ${v.secret ? '' : `<td data-l="Голос">${p.choice ? `<b class="c-${p.choice}">${S.CHOICE[p.choice]}</b>` : '—'}</td>`}
           <td data-l="Время" class="nowrap">${S.fmtDate(p.voted_at || p.identified_at)}</td>
-          <td data-l="Статус">${p.has_voted ? '<span class="c-for" style="font-weight:600">✓ проголосовал</span>' : '<span class="muted" style="font-weight:600">◷ ожидает голосования</span>'}</td>
-          <td style="white-space:nowrap">${!['closed', 'cancelled'].includes(v.status) ? (p.has_voted
-            ? `<button class="btn btn-sm btn-ghost" data-annul="${p.id}" title="Аннулировать голос">${icon('x')}</button>`
-            : `<button class="btn btn-sm btn-ghost" data-reset="${p.id}" title="Сбросить идентификацию">${icon('refresh')}</button>`)
-            + `<button class="btn btn-sm btn-ghost" data-remove="${p.id}" title="Удалить участника" style="color:var(--red)">${icon('trash')}</button>` : ''}</td>
-        </tr>`).join('')}</tbody></table></div>` : `<div class="empty">${icon('users')}Участники ещё не проходили идентификацию</div>`}
+          <td data-l="Статус">${status(p)}</td>
+          <td style="white-space:nowrap;text-align:right">${actions(p)}</td>
+        </tr>`).join('')}</tbody></table></div>` : pending.length ? '' : `<div class="empty">${icon('users')}Участники ещё не проходили идентификацию</div>`}
       <div class="card-body" style="border-top:1px solid var(--line-2);font-size:13px;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap">
         <span>Проголосовали: <b style="color:var(--ink)">${s.voted}</b></span>
-        <span>Ожидают голосования: <b style="color:var(--ink)">${d.participants.length - s.voted}</b></span>
+        <span>Ожидают голосования: <b style="color:var(--ink)">${admitted.length - s.voted}</b></span>
+        ${v.approval || pending.length ? `<span>Заявок на рассмотрении: <b style="color:var(--ink)">${pending.length}</b></span>` : ''}
         ${v.expected_participants ? `<span>Не прошли идентификацию: <b style="color:var(--ink)">${waitingIdent}</b></span>` : ''}
       </div>`;
-    $$('[data-reset]', el).forEach((b) => b.addEventListener('click', async () => {
-      if (!await S.confirmDialog({ title: 'Сбросить идентификацию?', text: 'Участник сможет заново пройти идентификацию по приглашению (например, если утратил доступ с устройства). Проголосовавших сбросить нельзя.', confirmLabel: 'Сбросить' })) return;
-      try { await api(`/admin/participants/${b.dataset.reset}/reset`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
+    const act = (attr, path, okText) => $$(`[data-${attr}]`, el).forEach((b) => b.addEventListener('click', async () => {
+      try { await api(`/admin/participants/${b.dataset[attr]}/${path}`, { method: 'POST', body: {} }); S.toast(okText, '', 'success'); reload(); } catch (e) { S.toastError(e); }
     }));
-    $$('[data-annul]', el).forEach((b) => b.addEventListener('click', async () => {
-      if (!await S.confirmDialog({ title: 'Аннулировать голос?', text: 'Голос участника будет аннулирован и удалён из подсчёта. Участник сможет проголосовать заново (в открытом голосовании) или будет удалён (в тайном).', confirmLabel: 'Аннулировать', danger: true })) return;
-      try { await api(`/admin/participants/${b.dataset.annul}/annul`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
-    }));
+    act('approve', 'approve', 'Участник допущен к голосованию');
+    act('reject', 'reject', 'Заявка отклонена');
     $$('[data-remove]', el).forEach((b) => b.addEventListener('click', async () => {
-      if (!await S.confirmDialog({ title: 'Удалить участника?', text: 'Участник и его голос (если есть) будут полностью удалены. Действие необратимо.', confirmLabel: 'Удалить', danger: true })) return;
-      try { await api(`/admin/participants/${b.dataset.remove}/remove`, { method: 'POST', body: {} }); reload(); } catch (e) { S.toastError(e); }
+      const text = b.dataset.voted
+        ? 'Участник будет удалён, а его голос — убран из подсчёта. Отменить это нельзя.'
+        : 'Участник будет удалён и сможет заново пройти идентификацию по приглашению. Отменить это нельзя.';
+      if (!await S.confirmDialog({ title: 'Удалить участника?', text, confirmLabel: 'Удалить', danger: true })) return;
+      try { await api(`/admin/participants/${b.dataset.remove}/remove`, { method: 'POST', body: {} }); S.toast('Участник удалён'); reload(); } catch (e) { S.toastError(e); }
     }));
   }
 

@@ -191,6 +191,94 @@ async function main() {
       assert.strictEqual(d.summary.evaluation.decision, 'rejected');
     });
 
+    await t('Тайное: проголосовавшего удалить нельзя, не голосовавшего — можно', async () => {
+      const r = await admin.post('/api/admin/votes', { type: 'other', title: 'Тайное удаление', starts_at: iso(-60e3), ends_at: iso(3600e3), secret: true, rule: { type: 'simple_majority' } });
+      const a = new Client(), b = new Client();
+      await a.post(`/api/v/${r.body.invite.code}/identify`, voter('Алла'));
+      await a.post(`/api/v/${r.body.invite.code}/ballot`, { choice: 'for' });
+      await b.post(`/api/v/${r.body.invite.code}/identify`, voter('Борис'));
+      const parts = (await admin.get(`/api/admin/votes/${r.body.vote.id}`)).body.participants;
+      const pa = parts.find((p) => p.name.startsWith('Алла')), pb = parts.find((p) => p.name.startsWith('Борис'));
+      assert.strictEqual((await admin.post(`/api/admin/participants/${pa.id}/remove`)).status, 403);
+      assert.strictEqual((await admin.post(`/api/admin/participants/${pb.id}/remove`)).status, 200);
+      assert.strictEqual(d1(`SELECT COUNT(*) c FROM ballots WHERE vote_id = ${Number(r.body.vote.id)}`)[0].c, 1);
+      assert.strictEqual(d1(`SELECT COUNT(*) c FROM participants WHERE vote_id = ${Number(r.body.vote.id)}`)[0].c, 1);
+    });
+
+    // ----- удаление участника, допуск Спикером, именные приглашения -----
+    await t('Открытое: удаление участника убирает его голос из подсчёта', async () => {
+      const r = await admin.post('/api/admin/votes', { type: 'other', title: 'Удаление', starts_at: iso(-60e3), ends_at: iso(3600e3), rule: { type: 'simple_majority' } });
+      const a = new Client(), b = new Client();
+      await a.post(`/api/v/${r.body.invite.code}/identify`, { ...voter('Попа'), last_name: 'Попа' });
+      await a.post(`/api/v/${r.body.invite.code}/ballot`, { choice: 'for' });
+      await b.post(`/api/v/${r.body.invite.code}/identify`, voter('Вера'));
+      await b.post(`/api/v/${r.body.invite.code}/ballot`, { choice: 'against' });
+      let d = (await admin.get(`/api/admin/votes/${r.body.vote.id}`)).body;
+      assert.deepStrictEqual(d.summary.tally, { for: 1, against: 1, abstain: 0 });
+      const troll = d.participants.find((p) => p.name === 'Попа Попа');
+      assert.strictEqual((await admin.post(`/api/admin/participants/${troll.id}/remove`)).status, 200);
+      d = (await admin.get(`/api/admin/votes/${r.body.vote.id}`)).body;
+      assert.deepStrictEqual(d.summary.tally, { for: 0, against: 1, abstain: 0 });
+      assert.strictEqual(d.summary.voted, 1);
+      assert.strictEqual(d.participants.length, 1);
+      assert.strictEqual(d.invites[0].uses, 1);
+      assert.strictEqual((await admin.post(`/api/admin/participants/${troll.id}/annul`)).status, 404);
+      await admin.post(`/api/admin/votes/${r.body.vote.id}/close`);
+      const left = (await admin.get(`/api/admin/votes/${r.body.vote.id}`)).body.participants[0];
+      assert.strictEqual((await admin.post(`/api/admin/participants/${left.id}/remove`)).status, 403);
+    });
+
+    let apv, ainv;
+    await t('Допуск Спикером: заявка не может голосовать и не входит в подсчёт', async () => {
+      const r = await admin.post('/api/admin/votes', { type: 'other', title: 'С допуском', starts_at: iso(-60e3), ends_at: iso(3600e3), approval: true, secret: true, rule: { type: 'simple_majority' } });
+      apv = r.body.vote; ainv = r.body.invite;
+      assert.strictEqual(apv.approval, true);
+      const a = new Client();
+      const id = await a.post(`/api/v/${ainv.code}/identify`, voter('Попа'));
+      assert.strictEqual(id.body.participant.admission, 'pending');
+      assert.strictEqual(code(await a.post(`/api/v/${ainv.code}/ballot`, { choice: 'for' })), 'NOT_APPROVED');
+      const d = (await admin.get(`/api/admin/votes/${apv.id}`)).body;
+      assert.strictEqual(d.summary.identified, 0);
+      assert.strictEqual(d.participants[0].admission, 'pending');
+      // гарантия на уровне базы
+      let failed = false;
+      try { d1(`UPDATE participants SET has_voted = 1 WHERE id = ${Number(d.participants[0].id)}`); } catch { failed = true; }
+      assert.ok(failed);
+      // отклонение: место в лимите освобождается, повторная заявка невозможна
+      assert.strictEqual((await admin.post(`/api/admin/participants/${d.participants[0].id}/reject`)).status, 200);
+      assert.strictEqual((await a.get(`/api/v/${ainv.code}`)).body.participant.admission, 'rejected');
+      assert.strictEqual(code(await a.post(`/api/v/${ainv.code}/ballot`, { choice: 'for' })), 'NOT_APPROVED');
+      assert.strictEqual(code(await new Client().post(`/api/v/${ainv.code}/identify`, voter('попа'))), 'NAME_TAKEN');
+      assert.strictEqual((await admin.get(`/api/admin/votes/${apv.id}`)).body.invites[0].uses, 0);
+    });
+    await t('Допуск Спикером: после одобрения голос принимается', async () => {
+      const a = new Client();
+      await a.post(`/api/v/${ainv.code}/identify`, voter('Нина'));
+      const p = (await admin.get(`/api/admin/votes/${apv.id}`)).body.participants.find((x) => x.name.startsWith('Нина'));
+      assert.strictEqual((await admin.post(`/api/admin/participants/${p.id}/approve`)).status, 200);
+      assert.strictEqual((await a.get(`/api/v/${ainv.code}`)).body.participant.admission, 'approved');
+      assert.strictEqual((await a.post(`/api/v/${ainv.code}/ballot`, { choice: 'for' })).status, 200);
+      assert.strictEqual((await admin.get(`/api/admin/votes/${apv.id}`)).body.summary.voted, 1);
+    });
+    await t('Именное приглашение: данные задаёт Спикер, ссылка одноразовая, допуск не нужен', async () => {
+      const person = { first_name: 'Джон', last_name: 'Смит', position_kind: 'leader', organization: 'FBI', division: 'HQ' };
+      const r = await admin.post(`/api/admin/votes/${apv.id}/invites/personal`, { people: [person] });
+      assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+      const pi = r.body.invites[0];
+      assert.ok(pi.personal && pi.person.name === 'Джон Смит' && pi.max_uses === 1);
+      assert.strictEqual((await admin.post(`/api/admin/votes/${apv.id}/invites/personal`, { people: [person] })).status, 400);
+      // под этим именем нельзя войти по общей ссылке
+      assert.strictEqual((await new Client().post(`/api/v/${ainv.code}/identify`, { ...person, confirm: true })).status, 403);
+      const a = new Client();
+      assert.strictEqual((await a.get(`/api/v/${pi.code}`)).body.person.name, 'Джон Смит');
+      // подставить чужие данные не получится
+      const id = await a.post(`/api/v/${pi.code}/identify`, { ...voter('Попа'), confirm: true });
+      assert.strictEqual(id.body.participant.name, 'Джон Смит');
+      assert.strictEqual(id.body.participant.admission, 'approved');
+      assert.strictEqual((await a.post(`/api/v/${pi.code}/ballot`, { choice: 'against' })).status, 200);
+      assert.strictEqual(code(await new Client().post(`/api/v/${pi.code}/identify`, { confirm: true })), 'INVITE_EXHAUSTED');
+    });
+
     // ----- ожидает начала / отмена -----
     await t('Голос до начала → VOTE_PENDING', async () => {
       const r = await admin.post('/api/admin/votes', { type: 'other', title: 'Будущее', starts_at: iso(3600e3), ends_at: iso(7200e3), rule: { type: 'manual' } });

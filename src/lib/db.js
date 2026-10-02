@@ -1,5 +1,5 @@
 /** Обёртка над Cloudflare D1. Весь доступ к базе идёт через неё. */
-import { SCHEMA, SCHEMA_VERSION } from './schema.js';
+import { SCHEMA, SCHEMA_VERSION, MIGRATIONS, SCHEMA_POST } from './schema.js';
 
 const clean = (a) => a.map((x) => (x === undefined ? null : typeof x === 'boolean' ? (x ? 1 : 0) : x));
 
@@ -28,6 +28,11 @@ export function ensureSchema(db) {
       const v = await db.first(`SELECT value FROM counters WHERE name = 'schema_version'`).catch(() => null);
       if (v && v.value >= SCHEMA_VERSION) return;
       await db.batch(SCHEMA.map((s) => db.d1.prepare(s)));
+      for (const m of MIGRATIONS) {
+        try { await db.d1.prepare(m).run(); }
+        catch (e) { if (!/duplicate column/i.test(String(e?.message || e?.cause?.message || ''))) throw e; }
+      }
+      await db.batch(SCHEMA_POST.map((s) => db.d1.prepare(s)));
       await db.run(`INSERT INTO counters(name, value) VALUES ('schema_version', ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`, SCHEMA_VERSION);
     })().catch((e) => { schemaReady = null; throw e; });
   }
@@ -39,6 +44,7 @@ export function dbErrorCode(e) {
   const m = String(e?.message || e?.cause?.message || '');
   if (m.includes('SWAG_VOTE_NOT_ACTIVE')) return 'VOTE_NOT_ACTIVE';
   if (m.includes('SWAG_ALREADY_VOTED')) return 'ALREADY_VOTED';
+  if (m.includes('SWAG_NOT_APPROVED')) return 'NOT_APPROVED';
   if (m.includes('SWAG_INVITE_UNAVAILABLE')) return 'INVITE_UNAVAILABLE';
   if (m.includes('UNIQUE constraint failed: participants.vote_id, participants.name_key')) return 'NAME_TAKEN';
   if (m.includes('UNIQUE constraint failed: ballots.participant_id')) return 'ALREADY_VOTED';

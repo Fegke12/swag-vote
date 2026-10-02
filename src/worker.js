@@ -250,7 +250,7 @@ api.get('/admin/votes/:id', async (c) => {
   const rel = (vid) => (vid ? db.first('SELECT id, number, title FROM votes WHERE id = ?', vid) : null);
   const [parts, invs, revisions, attachments, comments, protocol, parent, children, log] = await Promise.all([
     db.all(`SELECT p.*, b.choice AS choice FROM participants p LEFT JOIN ballots b ON b.participant_id = p.id
-            WHERE p.vote_id = ? ORDER BY p.has_voted DESC, p.voted_at, p.identified_at`, v.id),
+            WHERE p.vote_id = ? ORDER BY (p.approved = 0) DESC, p.has_voted DESC, p.voted_at, p.identified_at`, v.id),
     invites.listForVote(db, v.id),
     db.all('SELECT revision_no, note, created_at FROM bill_revisions WHERE vote_id = ? ORDER BY revision_no DESC', v.id),
     db.all('SELECT id, title, url, created_at FROM attachments WHERE vote_id = ? ORDER BY id', v.id),
@@ -269,6 +269,7 @@ api.get('/admin/votes/:id', async (c) => {
       id: p.id, name: `${p.first_name} ${p.last_name}`, position_kind: p.position_kind, position_title: p.position_title,
       organization: p.organization, division: p.division, has_voted: !!p.has_voted,
       identified_at: p.identified_at, voted_at: p.voted_at,
+      admission: p.approved === 1 ? 'approved' : p.approved === 0 ? 'pending' : 'rejected',
       choice: v.secret ? null : p.choice, receipt_no: v.secret ? null : p.receipt_no,
     })),
     revisions, attachments, comments, protocol, parent, children, log,
@@ -309,6 +310,14 @@ api.post('/admin/votes/:id/invites', async (c) => {
   return c.json({ ok: true, invite: invites.present(inv, v, baseUrl(c)) }, 201);
 });
 
+api.post('/admin/votes/:id/invites/personal', async (c) => {
+  const db = c.get('db');
+  const v = await votes.mustGet(db, pid(c));
+  if (v.status === 'closed' || v.status === 'cancelled') throw E.FORBIDDEN('Голосование завершено или отменено — новое приглашение не нужно.');
+  const list = await invites.createPersonal(db, v, (await body(c)).people, c.get('user'));
+  return c.json({ ok: true, invites: list.map((i) => invites.present(i, v, baseUrl(c))) }, 201);
+});
+
 api.post('/admin/invites/:id/revoke', async (c) => {
   const db = c.get('db');
   const inv = await invites.revoke(db, pid(c), c.get('user'));
@@ -345,44 +354,60 @@ api.post('/admin/participants/:id/reset', async (c) => {
   return c.json({ ok: true });
 });
 
-api.post('/admin/participants/:id/annul', async (c) => {
+/** Заявка на участие (голосование с допуском Спикера): допустить или отклонить. */
+async function pendingParticipant(c) {
   const db = c.get('db');
   const p = await db.first('SELECT * FROM participants WHERE id = ?', pid(c));
   if (!p) throw E.NOT_FOUND('Участник');
-  if (!p.has_voted) throw E.FORBIDDEN('Участник ещё не голосовал.');
-  const v = await votes.get(db, p.vote_id);
-  if (v.status === 'closed') throw E.FORBIDDEN('Голосование завершено — аннулирование невозможно.');
-  const stmts = [
-    db.stmt('UPDATE participants SET has_voted = 0, voted_at = NULL, receipt_no = NULL WHERE id = ?', p.id),
-    events.auditStmt(db, 'speaker', c.get('user').id, 'ballot.annulled', p.vote_id, { name: `${p.first_name} ${p.last_name}` }),
-  ];
-  if (v.secret) {
-    // В тайном голосовании бюллетень не привязан к участнику — невозможно определить, какой удалять
-    // Удаляем участника целиком, чтобы он прошёл идентификацию заново
-    stmts.push(db.stmt('DELETE FROM notifications WHERE participant_id = ?', p.id));
-    stmts.push(db.stmt('UPDATE comments SET participant_id = NULL WHERE participant_id = ?', p.id));
-    stmts.push(db.stmt('DELETE FROM participants WHERE id = ?', p.id));
-    stmts.push(db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id));
-  } else {
-    stmts.push(db.stmt('DELETE FROM ballots WHERE participant_id = ?', p.id));
-  }
-  await db.batch(stmts);
+  const v = await votes.mustGet(db, p.vote_id);
+  if (v.status === 'closed' || v.status === 'cancelled') throw E.FORBIDDEN('Голосование завершено или отменено.');
+  return { db, p, v, name: `${p.first_name} ${p.last_name}` };
+}
+
+api.post('/admin/participants/:id/approve', async (c) => {
+  const { db, p, v, name } = await pendingParticipant(c);
+  if (p.approved === 1) return c.json({ ok: true });
+  await db.batch([
+    db.stmt('UPDATE participants SET approved = 1 WHERE id = ?', p.id),
+    // отклонённая заявка место в лимите приглашения не занимала — возвращаем его
+    p.approved === -1 ? db.stmt('UPDATE invites SET uses = uses + 1 WHERE id = ?', p.invite_id) : null,
+    events.auditStmt(db, 'speaker', c.get('user').id, 'participant.approved', v.id, { name }),
+    events.notifyStmt(db, { audience: 'participant', voteId: v.id, participantId: p.id, kind: 'admission', title: 'Вы допущены к голосованию', body: 'Спикер Конгресса одобрил вашу заявку.' }),
+  ]);
   return c.json({ ok: true });
 });
 
+api.post('/admin/participants/:id/reject', async (c) => {
+  const { db, p, v, name } = await pendingParticipant(c);
+  if (p.has_voted) throw E.FORBIDDEN('Участник уже проголосовал.');
+  if (p.approved === -1) return c.json({ ok: true });
+  // Запись остаётся: имя и устройство заняты, повторно подать заявку нельзя. Место в лимите приглашения освобождается.
+  await db.batch([
+    db.stmt('UPDATE participants SET approved = -1 WHERE id = ? AND has_voted = 0', p.id),
+    db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id),
+    events.auditStmt(db, 'speaker', c.get('user').id, 'participant.rejected', v.id, { name }),
+    events.notifyStmt(db, { audience: 'participant', voteId: v.id, participantId: p.id, kind: 'admission', title: 'Заявка отклонена', body: 'Спикер Конгресса не допустил вас к голосованию.' }),
+  ]);
+  return c.json({ ok: true });
+});
+
+/**
+ * Удалить участника вместе с его голосом (например, посторонний вошёл по общей ссылке).
+ * В тайном голосовании бюллетень не связан с участником, поэтому проголосовавшего удалить нельзя:
+ * его голос остался бы в подсчёте, а сам он смог бы проголосовать второй раз.
+ */
 api.post('/admin/participants/:id/remove', async (c) => {
-  const db = c.get('db');
-  const p = await db.first('SELECT * FROM participants WHERE id = ?', pid(c));
-  if (!p) throw E.NOT_FOUND('Участник');
-  const v = await votes.get(db, p.vote_id);
-  if (v.status === 'closed') throw E.FORBIDDEN('Голосование завершено — удаление невозможно.');
+  const { db, p, v, name } = await pendingParticipant(c);
+  if (v.secret && p.has_voted) {
+    throw E.FORBIDDEN('В тайном голосовании бюллетень не связан с участником — голос уже проголосовавшего убрать нельзя. Отмените голосование и назначьте повторное.');
+  }
   await db.batch([
     db.stmt('DELETE FROM ballots WHERE participant_id = ?', p.id),
     db.stmt('DELETE FROM notifications WHERE participant_id = ?', p.id),
     db.stmt('UPDATE comments SET participant_id = NULL WHERE participant_id = ?', p.id),
     db.stmt('DELETE FROM participants WHERE id = ?', p.id),
-    db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id),
-    events.auditStmt(db, 'speaker', c.get('user').id, 'participant.removed', p.vote_id, { name: `${p.first_name} ${p.last_name}`, had_voted: !!p.has_voted }),
+    p.approved === -1 ? null : db.stmt('UPDATE invites SET uses = MAX(uses - 1, 0) WHERE id = ?', p.invite_id),
+    events.auditStmt(db, 'speaker', c.get('user').id, 'participant.removed', v.id, { name, had_voted: !!p.has_voted }),
   ]);
   return c.json({ ok: true });
 });
@@ -444,7 +469,7 @@ api.get('/admin/votes/:id/export.:fmt', async (c) => {
   const fmtParam = c.req.param('fmt');
   const s = await votes.summary(db, v);
   const rows = await db.all(`SELECT p.first_name, p.last_name, p.position_title, p.organization, p.division, p.has_voted, p.voted_at, b.choice, b.receipt_no
-                             FROM participants p LEFT JOIN ballots b ON b.participant_id = p.id WHERE p.vote_id = ? ORDER BY p.last_name`, v.id);
+                             FROM participants p LEFT JOIN ballots b ON b.participant_id = p.id WHERE p.vote_id = ? AND p.approved = 1 ORDER BY p.last_name`, v.id);
   await events.audit(db, 'speaker', c.get('user').id, 'export', v.id, { format: fmtParam });
   if (fmtParam === 'json') {
     return c.json({

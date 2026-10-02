@@ -3,7 +3,7 @@
  * Все проверки выполняются на сервере; браузер присылает только выбор.
  * Критичные гарантии дополнительно закреплены триггерами базы (см. lib/schema.js).
  */
-import { E, str, bool, sha256, randomToken, randomInt, nameKey, now, pad } from '../lib/util.js';
+import { E, str, bool, sha256, randomToken, randomInt, now, pad } from '../lib/util.js';
 import { dbErrorCode } from '../lib/db.js';
 import { POSITIONS, CHOICES } from './catalog.js';
 import * as votes from './votes.js';
@@ -50,6 +50,7 @@ async function publicVote(db, v) {
     starts_at: v.starts_at, ends_at: v.ends_at, closed_at: v.closed_at, closed_early: v.closed_early,
     status: v.status, status_label: v.status_label, status_long: v.status_long,
     secret: v.secret, allow_abstain: v.allow_abstain, allow_comments: v.allow_comments, show_results: v.show_results,
+    approval: v.approval,
     rule_text: v.rule_text, relation: v.relation, parent, revision, attachments, cancel_reason: v.cancel_reason,
   };
 }
@@ -83,6 +84,8 @@ function presentParticipant(p, vote) {
   return {
     identified: true, name: `${p.first_name} ${p.last_name}`, position: positionLine(p),
     has_voted: !!p.has_voted, voted_at: p.voted_at,
+    // допуск Спикера: approved — допущен, pending — заявка на рассмотрении, rejected — отклонена
+    admission: p.approved === 1 ? 'approved' : p.approved === 0 ? 'pending' : 'rejected',
     receipt_no: vote.secret ? null : p.receipt_no, // в тайном голосовании номер не хранится за участником
   };
 }
@@ -99,7 +102,12 @@ export async function state(db, code, token) {
   catch (e) { return { ok: false, error: errorPayload(e) }; }
 
   const p = await participantBySession(db, vote.id, token);
-  const base = { vote: await publicVote(db, vote), participant: presentParticipant(p, vote), server_time: now() };
+  const person = invites.personOf(inv);
+  const base = {
+    vote: await publicVote(db, vote), participant: presentParticipant(p, vote), server_time: now(),
+    // Именное приглашение: данные участника задал Спикер, вводить их не нужно
+    person: person && { name: `${person.first_name} ${person.last_name}`, position: positionLine(person) },
+  };
 
   if (inv.revoked_at && !p) return { ok: false, error: errorPayload(E.INVITE_REVOKED()), ...base, vote: null };
   if (vote.status === 'cancelled') return { ok: false, error: errorPayload(E.VOTE_CANCELLED()), ...base };
@@ -122,27 +130,24 @@ export async function identify(db, code, input, { deviceId, existingToken }) {
 
   assertCanJoin(inv, vote);
 
-  const first = str(input.first_name, { max: 60, required: true, label: 'Имя', field: 'first_name' });
-  const last = str(input.last_name, { max: 60, required: true, label: 'Фамилия', field: 'last_name' });
-  const kind = String(input.position_kind || '');
-  if (!POSITIONS[kind]) throw E.VALIDATION('Выберите должность.', 'position_kind');
-  let title = POSITIONS[kind], org, div;
-  if (kind === 'custom') {
-    title = str(input.position_title, { max: 120, required: true, label: 'Должность', field: 'position_title' });
-    org = str(input.organization, { max: 120, label: 'Департамент / организация', field: 'organization' });
-    div = str(input.division, { max: 120, label: 'Подразделение / отдел', field: 'division' });
-  } else {
-    org = str(input.organization, { max: 120, required: true, label: 'Департамент / организация', field: 'organization' });
-    div = str(input.division, { max: 120, required: true, label: 'Подразделение / отдел', field: 'division' });
-  }
-  if (!bool(input.confirm)) throw E.VALIDATION('Подтвердите достоверность указанных сведений.', 'confirm');
+  // По именному приглашению данные берутся из него (их задал Спикер), ввод участника игнорируется
+  const personal = invites.personOf(inv);
+  const d = personal || invites.parsePerson(input);
+  const { first_name: first, last_name: last, position_kind: kind, position_title: title, organization: org, division: div, name_key: key } = d;
+  if (!bool(input.confirm)) throw E.VALIDATION(personal ? 'Подтвердите, что приглашение выдано вам.' : 'Подтвердите достоверность указанных сведений.', 'confirm');
+  // Допуск: по именной ссылке — сразу; по общей — сразу либо после одобрения Спикером
+  const approved = personal || !vote.approval ? 1 : 0;
 
-  const key = nameKey(first, last);
-  if (key.length < 3) throw E.VALIDATION('Укажите полные имя и фамилию.', 'last_name');
   const deviceHash = deviceId ? await sha256(deviceId) : null;
 
   const dup = await db.first('SELECT has_voted FROM participants WHERE vote_id = ? AND name_key = ?', vote.id, key);
   if (dup) throw dup.has_voted ? E.ALREADY_VOTED() : E.NAME_TAKEN();
+  // Имя закреплено за именным приглашением — по общей ссылке под ним войти нельзя
+  if (!personal) {
+    for (const o of await db.all('SELECT person_json FROM invites WHERE vote_id = ? AND person_json IS NOT NULL AND revoked_at IS NULL', vote.id)) {
+      if (invites.personOf(o).name_key === key) throw E.FORBIDDEN('Для этого участника Спикер выдал именное приглашение — воспользуйтесь личной ссылкой.');
+    }
+  }
   if (inv.one_per_device && deviceHash &&
       await db.first('SELECT 1 FROM participants WHERE vote_id = ? AND device_hash = ?', vote.id, deviceHash)) {
     throw E.DEVICE_USED();
@@ -153,16 +158,19 @@ export async function identify(db, code, input, { deviceId, existingToken }) {
   try {
     // Лимит, срок и отзыв приглашения проверяет триггер trg_invite_limit, уникальность ФИО — ограничение UNIQUE
     p = await db.first(`INSERT INTO participants(vote_id, invite_id, first_name, last_name, position_kind, position_title,
-        organization, division, name_key, session_hash, device_hash, identified_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
-      vote.id, inv.id, first, last, kind, title, org, div, key, await sha256(token), deviceHash, now());
+        organization, division, name_key, session_hash, device_hash, identified_at, approved)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *`,
+      vote.id, inv.id, first, last, kind, title, org, div, key, await sha256(token), deviceHash, now(), approved);
   } catch (e) {
     const c = dbErrorCode(e);
     if (c === 'NAME_TAKEN') throw E.NAME_TAKEN();
     if (c === 'INVITE_UNAVAILABLE') { const fresh = await invites.byId(db, inv.id); assertCanJoin(fresh, vote); throw E.INVITE_EXHAUSTED(); }
     throw e;
   }
-  await auditStmt(db, 'participant', `P-${p.id}`, 'participant.identified', vote.id, { name: `${first} ${last}`, position: positionLine(p), invite: inv.code }).run();
+  await db.batch([
+    auditStmt(db, 'participant', `P-${p.id}`, approved ? 'participant.identified' : 'participant.applied', vote.id, { name: `${first} ${last}`, position: positionLine(p), invite: inv.code, personal: !!personal }),
+    approved ? null : notifyStmt(db, { audience: 'speaker', voteId: vote.id, kind: 'application', title: 'Новая заявка на участие', body: `${first} ${last} · ${positionLine(p)} · голосование № ${vote.number}` }),
+  ]);
   return { token, participant: presentParticipant(p, vote), voteId: vote.id, endsAt: vote.ends_at };
 }
 
@@ -177,6 +185,7 @@ export async function cast(db, code, token, choiceRaw) {
   if (vote.status === 'closed') throw E.VOTE_CLOSED();
   if (!p) throw E.NOT_IDENTIFIED();
   if (p.has_voted) throw E.ALREADY_VOTED();
+  if (p.approved !== 1) throw E.NOT_APPROVED();
   if (vote.status === 'pending') throw E.VOTE_PENDING(vote.starts_at);
   if (choice === 'abstain' && !vote.allow_abstain) throw E.ABSTAIN_DISABLED();
 
@@ -205,6 +214,7 @@ export async function cast(db, code, token, choiceRaw) {
   } catch (e) {
     const c = dbErrorCode(e);
     if (c === 'ALREADY_VOTED') throw E.ALREADY_VOTED();
+    if (c === 'NOT_APPROVED') throw E.NOT_APPROVED();
     if (c === 'VOTE_NOT_ACTIVE') {
       const fresh = await votes.get(db, vote.id);
       throw fresh.status === 'cancelled' ? E.VOTE_CANCELLED() : fresh.status === 'pending' ? E.VOTE_PENDING(fresh.starts_at) : E.VOTE_CLOSED();
@@ -226,6 +236,7 @@ export async function addComment(db, code, token, bodyRaw) {
   if (vote.status === 'closed' || vote.status === 'cancelled') throw E.FORBIDDEN('Обсуждение закрыто.');
   const p = await participantBySession(db, vote.id, token);
   if (!p) throw E.NOT_IDENTIFIED();
+  if (p.approved !== 1) throw E.NOT_APPROVED();
   const body = str(bodyRaw, { max: 2000, required: true, label: 'Комментарий' });
   const recent = (await db.first(`SELECT COUNT(*) c FROM comments WHERE participant_id = ? AND created_at > ?`, p.id, new Date(Date.now() - 60000).toISOString())).c;
   if (recent >= 5) throw E.RATE_LIMIT();

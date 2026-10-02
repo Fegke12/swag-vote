@@ -29,7 +29,7 @@ export function hydrate(row) {
     rule, rule_text: rules.describeRule(rule),
     secret: !!row.secret, allow_abstain: !!row.allow_abstain,
     show_results: !!row.show_results, show_voter_list: !!row.show_voter_list,
-    allow_comments: !!row.allow_comments,
+    allow_comments: !!row.allow_comments, approval: !!row.approval,
     expected_participants: row.expected_participants,
     parent_id: row.parent_id, relation: row.relation,
     closed_at: row.closed_at, closed_early: !!row.closed_early,
@@ -63,7 +63,7 @@ export async function tally(db, voteId) {
 }
 
 export function participationCounts(db, voteId) {
-  return db.first(`SELECT COUNT(*) identified, COALESCE(SUM(has_voted),0) voted FROM participants WHERE vote_id = ?`, voteId);
+  return db.first(`SELECT COUNT(*) identified, COALESCE(SUM(has_voted),0) voted FROM participants WHERE vote_id = ? AND approved = 1`, voteId);
 }
 
 export async function summary(db, v) {
@@ -117,7 +117,7 @@ function parseInput(input, { partial = false } = {}) {
   if (has('starts_at')) out.starts_at = date(input.starts_at, { label: 'дата начала', field: 'starts_at' });
   if (has('ends_at')) out.ends_at = date(input.ends_at, { label: 'дата окончания', field: 'ends_at' });
   if (has('rule')) out.rule = rules.normalizeRule(input.rule || {});
-  for (const k of ['secret', 'allow_abstain', 'show_results', 'show_voter_list', 'allow_comments']) {
+  for (const k of ['secret', 'allow_abstain', 'show_results', 'show_voter_list', 'allow_comments', 'approval']) {
     if (Object.prototype.hasOwnProperty.call(input, k) && input[k] !== undefined && input[k] !== null) out[k] = bool(input[k]) ? 1 : 0;
   }
   if (has('expected_participants')) out.expected_participants = int(input.expected_participants, { min: 1, max: 10000, label: 'Количество приглашённых', field: 'expected_participants' });
@@ -139,11 +139,11 @@ export async function create(db, input, user, { parentId = null, relation = null
   const ts = now();
   const row = await db.first(`INSERT INTO votes(number, type, title, hint, description, body, initiator, speaker_name, starts_at, ends_at,
       rule_json, secret, allow_abstain, show_results, show_voter_list, allow_comments, expected_participants,
-      parent_id, relation, created_by, created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+      parent_id, relation, created_by, created_at, updated_at, approval)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
     number, d.type, d.title, d.hint || '', d.description || '', d.body || '', d.initiator || '', user.display_name,
     d.starts_at, d.ends_at, JSON.stringify(d.rule), d.secret ?? 0, d.allow_abstain ?? 1, d.show_results ?? 1,
-    d.show_voter_list ?? 0, d.allow_comments ?? 0, d.expected_participants ?? null, parentId, relation, user.id, ts, ts);
+    d.show_voter_list ?? 0, d.allow_comments ?? 0, d.expected_participants ?? null, parentId, relation, user.id, ts, ts, d.approval ?? 0);
   const id = row.id;
   const [, rev] = await revisionStmt(db, id, { title: d.title, hint: d.hint || '', description: d.description || '', body: d.body || '' }, user.id, 'Первоначальная редакция');
   await db.batch([rev, auditStmt(db, 'speaker', user.id, 'vote.created', id, { number, title: d.title, relation, parent_id: parentId })]);
@@ -178,7 +178,7 @@ export async function update(db, id, input, user) {
     if (started) throw E.FORBIDDEN('Правило принятия нельзя менять после начала голосования.');
     sets.rule_json = JSON.stringify(d.rule); changes.push('rule');
   }
-  for (const k of ['show_results', 'show_voter_list', 'allow_comments']) {
+  for (const k of ['show_results', 'show_voter_list', 'allow_comments', 'approval']) {
     if (d[k] !== undefined && d[k] !== (v[k] ? 1 : 0)) { sets[k] = d[k]; changes.push(k); }
   }
   let rescheduled = false;
@@ -282,7 +282,7 @@ export async function revote(db, id, input, user) {
   return create(db, {
     type: v.type, title: v.title, hint: v.hint, description: v.description, body: v.body, initiator: v.initiator,
     rule: v.rule, secret: v.secret, allow_abstain: v.allow_abstain, show_results: v.show_results,
-    show_voter_list: v.show_voter_list, allow_comments: v.allow_comments, expected_participants: v.expected_participants,
+    show_voter_list: v.show_voter_list, allow_comments: v.allow_comments, approval: v.approval, expected_participants: v.expected_participants,
     starts_at: input.starts_at, ends_at: input.ends_at,
   }, user, { parentId: id, relation: 'revote' });
 }
@@ -294,6 +294,7 @@ export async function amendment(db, id, input, user) {
     ...input, type: 'amendment',
     initiator: input.initiator || v.initiator,
     rule: input.rule || v.rule,
+    approval: input.approval ?? v.approval,
     expected_participants: input.expected_participants ?? v.expected_participants,
   }, user, { parentId: id, relation: 'amendment', invite: input.invite || {} });
 }
@@ -318,7 +319,7 @@ export async function list(db, { status = '', type = '', q = '', from = '', to =
   if (to) { where.push('v.starts_at <= ?'); args.push(date(to, { label: 'дата «по»' })); }
   const rows = await db.all(`
     SELECT v.*,
-      (SELECT COUNT(*) FROM participants p WHERE p.vote_id = v.id) AS c_identified,
+      (SELECT COUNT(*) FROM participants p WHERE p.vote_id = v.id AND p.approved = 1) AS c_identified,
       (SELECT COUNT(*) FROM participants p WHERE p.vote_id = v.id AND p.has_voted = 1) AS c_voted,
       (SELECT COUNT(*) FROM ballots b WHERE b.vote_id = v.id AND b.choice = 'for') AS t_for,
       (SELECT COUNT(*) FROM ballots b WHERE b.vote_id = v.id AND b.choice = 'against') AS t_against,
@@ -344,7 +345,7 @@ export async function dashboard(db) {
   const all = await list(db, { limit: 100000 });
   const count = (s) => all.filter((v) => v.status === s).length;
   const [p, b, pr, activity] = await Promise.all([
-    db.first('SELECT COUNT(DISTINCT name_key) c FROM participants'),
+    db.first('SELECT COUNT(DISTINCT name_key) c FROM participants WHERE approved = 1'),
     db.first('SELECT COUNT(*) c FROM ballots'),
     db.first('SELECT COUNT(*) c FROM protocols'),
     listAudit(db, { limit: 40 }),
@@ -368,6 +369,6 @@ export async function memberStats(db) {
       (SELECT p2.position_title || CASE WHEN p2.organization <> '' THEN ' — ' || p2.organization ELSE '' END
          FROM participants p2 WHERE p2.name_key = p.name_key ORDER BY p2.identified_at DESC LIMIT 1) AS position,
       COUNT(*) AS identified, SUM(p.has_voted) AS voted, MAX(p.voted_at) AS last_voted_at
-    FROM participants p GROUP BY p.name_key ORDER BY voted DESC, name ASC`);
+    FROM participants p WHERE p.approved = 1 GROUP BY p.name_key ORDER BY voted DESC, name ASC`);
   return { total_closed_votes: totalVotes, members };
 }
